@@ -1,0 +1,1398 @@
+GAMS 44.2.0  7d8c2acc Aug 17, 2023          WEX-WEI x86 64bit/MS Windows - 07/10/25 07:15:17 Page 1
+The Standard IFPRI Model Implemented in MPSGE
+C o m p i l a t i o n
+
+
+   2   
+   3  *       This GAMS program illustrates the implementation and analysis of an
+   4  *       open-economy general equilibrium model based on the IFPRI standard model.
+   5  *       This is a small open economy model for Peru which is formulated as
+   6  *       a nonlinear complementarity problem using MPSGE for generation of the
+   7  *       underlying system of equations.
+   8   
+   9  *       This program reads the social accounting matrix for Peru, 2004 from an
+  10  *       Excel worksheet, extracts relevant submatrices, and replicates the base
+  11  *       year equilibrium.
+  12   
+  13  *       Model application is illustrated through a typical counterfactual simulation
+  14  *       in which all tariffs are set to zero.   We compute this scenario under eight
+  15  *       alternative model closures.
+  16   
+  17  *       Documentation of the 2004 Peru SAM is provided in English (PeruSAM.PDF) and
+  18  *       Spanish (PeruSAM.doc).
+  19   
+  20  *       GAMS code and associated data and template files are in ifprimpsge.zip (360K).
+  21   
+  22  *       A zipped copy of the resulting report file is in uft.zip (151K).
+  23   
+  24  *       This work has been funded through the Inter-American Development Bank
+  25  *       program Foreign Trade Policies Development Program", loan contract
+  26  *       No. 1442/OC-PE under the task, "Development of a set of computable
+  27  *       general equilibrium models to analyze economic, trade and social
+  28  *       policies".  This work has been conduct in collaboration with the
+  29  *       Office of Economic Research, Vice Ministry of Foreign Trade. Expert
+  30  *       assistance has been provided by Gabriela Cuadra and Claudia Sanchez.
+  31  *       Errors remain my own.
+  32   
+  33  *       Thomas F. Rutherford
+  34  *       December, 2006
+  35   
+  36  *       Uncomment the following statement to generate the unilateral
+  37  *       free trade simultion:
+  38   
+  39  * $set uftsim
+  40   
+  41  set     r       Set of SAM rows  /1*61/;
+  42   
+  43  scalar
+  44   
+  45  *       The following three parameter determine the model "closure", reflecting
+  46  *       alternative assumptions about the macroeconomic environment:
+  47   
+  48          flexiblePFX     Logical flag (1=flexible exchange rate) /1/,
+  49   
+  50  *       flexiblePFX determines the "Rest of World" constraint in the
+  51  *       standard IFPRI model.  When flexiblePFX=1, we assume that foreign
+  52  *       savings in Peru are fixed and the real exchange rate is flexibl.
+  53  *       When flexiblePFX=0,  we assume that foreign savings in Peru
+  54  *       adjust endogenously so that the real exchange rate remains fixed.
+  55   
+  56          eqyield         Logical flag (1=tax replacement)        /1/,
+  57   
+  58  *       eqyield determines the "Government" constraint in the standard
+  59  *       IFPRI model.  When eqyield=1, we assume that government savings
+  60  *       are fixed and direct tax rates on households and enterprises
+  61  *       are adjusted to balance the public budget.  When eqyield=0, we
+  62  *       assume that direct tax rates are fixed and government savings
+  63  *       adjusts proportionally to private savings and investment.
+  64   
+  65          fixedGS         Logical flag (1=fixed investment and public demand) /1/;
+  66   
+  67  *       fixedGS determines the "Savings-Investment" constraint in the
+  68  *       standard IFPRI model.  When "fixedGS=1" we assume fixed private savings
+  69  *       and investment.  When fixedGS=0, we assume that savings (and investment)
+  70  *       adjusts in proportion to total absorption.
+  71   
+  72   
+  73  *       SAM rows and columns are the same set:
+  74   
+  75  alias (r,c);
+  76   
+  77  *       Pull the social accounting data from the source Excel file:
+  78   
+  79  parameter       sam(r,c)        Social accounts;
+GDXIN   C:\Users\Mitch\Documents\Modeling\IFPRI_model\data\sam2004.gdx
+--- LOAD  sam = 1:sam
+  83   
+  84  *       Computation works best when numbers are around unity (one), so we scale the SAM data accordingly:
+  85   
+  86  sam(r,c) = sam(r,c)/1e9;
+  87   
+  88   
+  89  set     rc(r)   Rows in the SAM to be checked /1*60/;
+  90   
+  91  parameter       chksam  Cross check on totals;
+  92  chksam(r,"row") = sum(rc(c), sam(r,c));
+  93  chksam(r,"col61") = sam(r,"61");
+  94  chksam(r,"col") = sum(rc(c), sam(c,r));
+  95  chksam(r,"row61") = sam("61",r);
+  96  chksam(r,"diff") = chksam(r,"row") - chksam(r,"col");
+  97  chksam(r,"diff%")$chksam(r,"row") = chksam(r,"diff")/chksam(r,"row");
+  98  display chksam;
+  99   
+ 100  set f Factores de produccion /
+ 101          urbusk  "Urbano Asalariado no calificado",
+ 102          urbskl  "Urbano Asalariado calificado",
+ 103          urbsusk "Urbano Independiente no calificado",
+ 104          urbsskl "Urbano Independiente calificado",
+ 105          rurusk  "Rural no calificado",
+ 106          rurskl  "Rural calificado",
+ 107          cap     "Capital"/
+ 108  alias (f,ff);
+ 109   
+ 110  set h Hogares /
+ 111          costau          "Hogar costa urbana",
+ 112          sierrau         "Hogar sierra urbana",
+ 113          selvau          "Hogar selva urbana",
+ 114          lima            "Hogar Lima metropolitana",
+ 115          costar          "Hogar costa rural",
+ 116          sierrar         "Hogar sierra rural",
+ 117          selvar          "Hogar selva rural"/;
+ 118  alias (h,hh);
+ 119   
+ 120  set g   Actividades y Bienes /
+ 121          agr     "Agropecuaria, caza, silvicultura",
+ 122          fsh     "Pesca, preservacion, harina y aceite de pescado",
+ 123          min     "Extraccion de minerales, extraccion de petroleo",
+ 124          foo     "Bebidas y tabaco, lacteos y otros productos alimenticios, molineria y panaderia, azucar",
+ 125          txt     "Productos textiles, prendas de vestir, cuero y articulos de cuero, calzado",
+ 126          mac     "Maquinaria y equipo, material de transporte, muebles de madera y metal, productos de metal, caucho y plastico y otros manufacturados",
+ 127          chm     "Productos quimicos basicos, abonos, y productos farmaceuticos, productos de papel, impresion y edicion",
+ 128          con     "Construccion",
+ 129          com     "Comercio",
+ 130          trn     "Transportes y comunicaciones",
+ 131          hea     "Salud",
+ 132          edu     "Educacion",
+ 133          gov     "Servicios gubernamentales",
+ 134          srv     "Servicios financieros y de seguros, servicios a empresas, servicios mercantes a hogares",
+ 135          htl     "Restaurantes y hoteles, servicios no mercantes a hogares, alquiler de vivienda"/;
+ 136   
+ 137  alias (g,s,gg,ss);
+ 138   
+ 139  set     mapr(r,*)       Mapping from SAM accounts to labels /
+ 140   
+ 141  *       Factores de produccion
+ 142   
+ 143          1.urbusk        "Urbano Asalariado no calificado",
+ 144          2.urbskl        "Urbano Asalariado calificado",
+ 145          3.urbsusk       "Urbano Independiente no calificado",
+ 146          4.urbsskl       "Urbano Independiente calificado",
+ 147          5.rurusk        "Rural no calificado",
+ 148          6.rurskl        "Rural calificado",
+ 149          7.cap           "Capital"
+ 150   
+ 151  *       Instituciones
+ 152   
+ 153          8.costau        "Hogar costa urbana",
+ 154          9.costar        "Hogar costa rural",
+ 155          10.sierrau      "Hogar sierra urbana",
+ 156          11.sierrar      "Hogar sierra rural",
+ 157          12.selvau       "Hogar selva urbana",
+ 158          13.selvar       "Hogar selva rural",
+ 159          14.lima         "Hogar Lima metropolitana",
+ 160          15.ent          "Empresas (enterprises)",
+ 161          16.gvt          "Gobierno general (central government)",
+ 162          17.edu          "Educacion (education)",
+ 163          18.hea          "Salud (health)",
+ 164          19.trn          "Asistencia alimentaria (transportation)",
+ 165   
+ 166          20.soc          "Gasto social (social costs)",
+ 167          21.pub          "Capital publico (public capital)",
+ 168          22.cca          "Cuenta de capitales combinada (combined capital account)",
+ 169          23.inv          "Variacion de existencias (change in stock)",
+ 170   
+ 171  *       Actividades
+ 172   
+ 173          24.agr          "Agropecuaria, caza, silvicultura",
+ 174          25.fsh          "Pesca, preservacion, harina y aceite de pescado",
+ 175          26.min          "Extraccion de minerales, extraccion de petroleo",
+ 176          27.foo          "Bebidas y tabaco, lacteos y otros productos alimenticios, molineria y panaderia, azucar",
+ 177          28.txt          "Productos textiles, prendas de vestir, cuero y articulos de cuero, calzado",
+ 178          29.mac          "Maquinaria y equipo, material de transporte etc.",
+ 179          30.chm          "Productos quimicos basicos, abonos, y productos farmaceuticos etc.",
+ 180          31.con          "Construccion",
+ 181          32.com          "Comercio",
+ 182          33.trn          "Transportes y comunicaciones",
+ 183          34.hea          "Salud",
+ 184          35.edu          "Educacion",
+ 185          36.gov          "Servicios gubernamentales",
+ 186          37.srv          "Servicios financieros y de seguros, servicios a empresas, servicios mercantes a hogares",
+ 187          38.htl          "Restaurantes y hoteles, servicios no mercantes a hogares, alquiler de vivienda",
+ 188   
+ 189  *       Bienes
+ 190   
+ 191          39.agr          "Agropecuaria, caza, silvicultura",
+ 192          40.fsh          "Pesca, preservacion, harina y aceite de pescado",
+ 193          41.min          "Extraccion de minerales, extraccion de petroleo",
+ 194          42.foo          "Bebidas y tabaco, lacteos y otros productos alimenticios, molineria y panaderia, azucar",
+ 195          43.txt          "Productos textiles, prendas de vestir, cuero y articulos de cuero, calzado",
+ 196          44.mac          "Maquinaria y equipo, material de transporte etc.",
+ 197          45.chm          "Productos quimicos basicos, abonos, y productos farmaceuticos etc.",
+ 198          46.con          "Construccion",
+ 199          47.com          "Comercio",
+ 200          48.trn          "Transportes y comunicaciones",
+ 201          49.hea          "Salud",
+ 202          50.edu          "Educacion",
+ 203          51.gov          "Servicios gubernamentales",
+ 204          52.srv          "Servicios financieros y de seguros, servicios a empresas, servicios mercantes a hogares",
+ 205          53.htl          "Restaurantes y hoteles, servicios no mercantes a hogares, alquiler de vivienda",
+ 206   
+ 207  *       Comercializacion
+ 208   
+ 209          54.dom          "Bienes domesticos",
+ 210          55.imp          "Bienes importados",
+ 211   
+ 212          56.dtax         "Ingresos por impuestos directos        (direct taxes)",
+ 213          57.itax         "Ingresos por impuestos indirectos (indirect taxes)",
+ 214          58.tar          "Derechos de importacion (tariffs)",
+ 215          59.row          "Cuenta combinada del resto del mundo (current account)",
+ 216          60.ext          "Deuda externa (external debt)"/;
+ 217   
+ 218  set bienes(r)/39*53/, actividades(c)/24*38/, factores(r)/1*7/, hogares(r)/8*14/;
+ 219   
+ 220  *       Display numerical values from select SAM accounts:
+ 221   
+ 222  parameter       firms0  Activities of enterprises;
+ 223  alias (u,*);
+ 224  loop(mapr(r,u),
+ 225          firms0(u,"payment") = sam(r,"15");
+ 226          firms0(u,"receipt") = sam("15",r);
+ 227  );
+ 228  display firms0;
+ 229   
+ 230   
+ 231  parameter       capital0        Elements of the combined capital account;
+ 232  alias (u,*);
+ 233  loop(mapr(r,u)$(not actividades(r)),
+ 234          capital0(u,"payment") = sam(r,"22");
+ 235          capital0(u,"receipt") = sam("22",r);
+ 236  );
+ 237  display capital0;
+ 238   
+ 239  parameter       rent0   Elements of capital earnings;
+ 240  alias (u,*);
+ 241  loop(mapr(r,u)$(not bienes(r)),
+ 242          rent0(u,"payment") = sam(r,"7");
+ 243          rent0(u,"receipt") = sam("7",r);
+ 244  );
+ 245  display rent0;
+ 246   
+ 247  parameter       direct0 Direct tax payments;
+ 248  loop(mapr(r,u)$(not actividades(r)),
+ 249          direct0(u,"payment") = sam(r,"56");
+ 250          direct0(u,"receipt") = sam("56",r);
+ 251  );
+ 252  display direct0;
+ 253   
+ 254  *       Decleare submatrices which collectively constitute the
+ 255  *       social accounting matrix:
+ 256   
+ 257  parameters
+ 258          sh0(s)          Sectoral output supplied directly to households
+ 259          s0(s,g)         Sectoral supply of goods
+ 260          gd0(g)          Government demand
+ 261          gs0(g)          Government social demand
+ 262          gi0(g)          Demand for goods into government investment
+ 263          i0(g)           Private investment demand
+ 264          stk0(g)         Stock and inventory demand
+ 265          msd0(g)         Margin supply for domestic market
+ 266          msm0(g)         Margin supply for import market
+ 267          x0(g)           Exports
+ 268          d0(g)           Domestic supply
+ 269          y0(s)           Aggregate output
+ 270          ym0(g)          Marketed output
+ 271          m0(g)           Imports (cif)
+ 272          tm0(g)          Import tariffs
+ 273          ta0(g)          Indirect taxes
+ 274          mdd0(g)         Margins (on domestic supply)
+ 275          mdm0(g)         Margins (on imported supply)
+ 276          cn0(*,h)        Household demand for non-market sectoral output,
+ 277          cm0(g,h)        Household demand for market output,
+ 278          id0(g,s)        Intermediate demand
+ 279          fd0(f,s)        Factor demand
+ 280          fe0(*,f)        Factor endowments
+ 281          hs0(*)          Household and enterprise saving
+ 282          hp0(h)          Household payments by enterprises
+ 283          es0             Enterprise saving
+ 284          a0(g)           Armington supply (aggregate demand)
+ 285          d0(g)           Domestic supply
+ 286          dtax0(*)        Direct taxes;
+ 287   
+ 288  *       Extract these submatrices, setting elements of the SAM to zero
+ 289  *       as data are extracted:
+ 290   
+ 291  loop((g,s,r,c)$(bienes(r) and actividades(c) and mapr(r,g) and mapr(c,s)),
+ 292          id0(g,s) = sam(r,c); sam(r,c) = 0;
+ 293  );
+ 294   
+ 295  loop((f,s,r,c)$(factores(r) and actividades(c) and mapr(r,f) and mapr(c,s)),
+ 296          fd0(f,s) = sam(r,c); sam(r,c) = 0;
+ 297  );
+ 298  loop((h,f,r,c)$(hogares(r) and factores(c) and mapr(r,h) and mapr(c,f)),
+ 299          fe0(h,f) = sam(r,c); sam(r,c) = 0;
+ 300  );
+ 301  loop((f,r)$(factores(r) and mapr(r,f)),
+ 302          fe0("row",f) = -sam(r,"59"); sam(r,"59") = 0;
+ 303  );
+ 304   
+ 305  loop((s,h,r,c)$(actividades(r) and hogares(c) and mapr(r,s) and mapr(c,h)),
+ 306          cn0(s,h) = sam(r,c); sam(r,c) = 0;
+ 307  );
+ 308  sh0(s) = sum(h, cn0(s,h));
+ 309  loop((s,g,r,c)$(actividades(r) and bienes(c) and mapr(r,s) and mapr(c,g)),
+ 310          s0(s,g) = sam(r,c); sam(r,c) = 0;
+ 311  );
+ 312  loop((g,h,r,c)$(bienes(r) and hogares(c) and mapr(r,g) and mapr(c,h)),
+ 313          cm0(g,h) = sam(r,c); sam(r,c) = 0;
+ 314  );
+ 315  loop((g,r)$(bienes(r) and mapr(r,g)),
+ 316          gd0(g) = sam(r,"16"); sam(r,"16") = 0;
+ 317          gi0(g) = sam(r,"21"); sam(r,"21") = 0;
+ 318          gs0(g) = sam(r,"20"); sam(r,"20") = 0;
+ 319          i0(g) = sam(r,"22"); sam(r,"22") = 0;
+ 320          stk0(g) = sam(r,"23"); sam(r,"23") = 0;
+ 321          msd0(g) = sam(r,"54"); sam(r,"54") = 0;
+ 322          msm0(g) = sam(r,"55"); sam(r,"55") = 0;
+ 323          x0(g) = sam(r,"59"); sam(r,"59") = 0;
+ 324          m0(g) = sam("59",r); sam("59",r) = 0;
+ 325          tm0(g) = sam("58",r); sam("58",r) = 0;
+ 326          ta0(g) = sam("57",r); sam("57",r) = 0;
+ 327          mdd0(g) = sam("54",r); sam("54",r) = 0;
+ 328          mdm0(g) = sam("55",r); sam("55",r) = 0;
+ 329  );
+ 330   
+ 331  *       Display the SAM elements which have not been extracted:
+ 332   
+ 333  display "Unextracted SAM data:", sam;
+ 334   
+ 335  *       We have some tariff revenue for the SRV sector which
+ 336  *       has no imports.  Recategorize these data as indirect taxes:
+ 337   
+ 338  ta0(g)$(m0(g) = 0) = ta0(g) + tm0(g);
+ 339  tm0(g)$(m0(g) = 0) = 0;
+ 340   
+ 341  *       Domestic supply equals production less exports:
+ 342   
+ 343  d0(g) = sum(s,s0(s,g)) - x0(g);
+ 344   
+ 345  *       Aggregate domestic absorption:
+ 346   
+ 347  a0(g) = gd0(g) + gi0(g) + gs0(g) + i0(g) + stk0(g) + msd0(g) + msm0(g) + sum(s,id0(g,s)) + sum(h,cm0(g,h));
+ 348   
+ 349  parameter       profit(s,*)     Profit check for production and aggregate supply;
+ 350   
+ 351  profit(s,"y") = sh0(s) + sum(g, s0(s,g)) - sum(g, id0(g,s)) - sum(f, fd0(f,s));
+ 352  profit(g,"a") = a0(g) - m0(g) - d0(g) - tm0(g) - ta0(g) - mdd0(g) -mdm0(g);
+ 353  display profit;
+ 354   
+ 355  parameter       market  Market clearance;
+ 356   
+ 358   
+ 359  market(g,"s0") = sum(s,s0(s,g));        ! Sectoral supply
+ 360  market(g,"x0") = x0(g);                 ! Exports
+ 361  market(g,"m0") = m0(g);                 ! Imports (cif)
+ 362  market(g,"tm0") = tm0(g);               ! Tariff revenue
+ 363  market(g,"md") = mdd0(g)+mdm0(g);       ! Margin demand (domestic and imported goods)
+ 364  market(g,"ms") = msd0(g)+msm0(g);       ! Margin supply
+ 365  market(g,"ta0") = ta0(g);               ! Indirect taxes
+ 366  market(g,"id0") = sum(s, id0(g,s));     ! Intermediate demand
+ 367  market(g,"cm0") = sum(h, cm0(g,h));     ! Consumer demand (market)
+ 368  market(g,"i0") = i0(g);                 ! Investment
+ 369  market(g,"gd0") = gd0(g);               ! Government demand
+ 370  market(g,"gs0") = gs0(g);               ! Government social demand
+ 371  market(g,"gi0") = gi0(g);               ! Government investment demand
+ 372  market(g,"stk0") = stk0(g);             ! Changes in stock
+ 373   
+ 374  *       Generate a cross-check of consistency:
+ 375   
+ 376  market(g,"chk") = sum(s,s0(s,g))-x0(g) + m0(g) + tm0(g) + ta0(g) + mdd0(g)+mdm0(g)
+ 377          - sum(h, cm0(g,h)) - (msd0(g)+msm0(g)) - sum(s, id0(g,s)) - i0(g) - (gd0(g)+gs0(g)+gi0(g)) - stk0(g);
+ 378   
+ 379  *       Report the totals for each of these accounts:
+ 380   
+ 381  set acct /s0,m0,x0,tm0,md,ms,ta0,id0,cm0,i0,gs0,gd0,gi0,stk0/;
+ 382  market("total",acct) = sum(g,market(g,acct));
+ 383  display market;
+ 384   
+ 385  parameter       g0(g)   Aggregate public demand;
+ 386  g0(g) = gd0(g)+gs0(g)+gi0(g);
+ 387   
+ 388  *       Enterprise capital earnings:
+ 389   
+ 390  fe0("ent","cap") = rent0("ent","payment");
+ 391   
+ 392  *       Household receipts from firms:
+ 393   
+ 394  hp0(h) = firms0(h,"payment");
+ 395   
+ 396  *       Household savings:
+ 397   
+ 398  hs0(h) = capital0(h,"receipt");
+ 399   
+ 400  *       Enterprise savings:
+ 401   
+ 402  hs0("ent") = capital0("ent","receipt");
+ 403   
+ 404  *       Marketed output by commodity:
+ 405   
+ 406  ym0(g) = sum(s, s0(s,g));
+ 407   
+ 408  *       Sectoral output (market and non-market):
+ 409   
+ 410  y0(s) = sum(g,s0(s,g)) + sh0(s);
+ 411   
+ 412  parameter       esub(s)         Elasticity of substitution
+ 413                  esubv(s)        Elasticity of substitution (value-added)
+ 414                  govdef          Government deficit
+ 415                  eta(g)          Elasticity of transformation
+ 416                  sigma(g)        Armington elasticity
+ 417                  trn0(*)         Net transfers
+ 418                  gsav0           Government saving
+ 419                  fsav0           Foreign saving
+ 420                  c0(h)           Consumption demand
+ 421                  pm0(g)          Reference import price
+ 422                  tm(g)           Import tariff rate
+ 423                  ta(g)           Indirect tax rate
+ 424                  tva(s)          Indirect tax levied on production
+ 425                  tva0(s)         Base year rate;
+ 426   
+ 427  *       Define some default elasticities:
+ 428   
+ 429  esub(s) = 0;
+ 430  esubv(s) = 1;
+ 431  eta(g)  = 5;
+ 432  sigma(g) = 5;
+ 433   
+ 434  *       Foreign savings:
+ 435   
+ 436  fsav0 = capital0("row","receipt");
+ 437   
+ 438  *       Government savings is defined as a residual:
+ 439   
+ 440  gsav0 = sum(g,i0(g)) - fsav0 - sum(h, hs0(h)) - hs0("ent");
+ 441  display gsav0;
+ 442   
+ 443   
+ 444   
+ 445  *       No sectoral value-added taxes in this dataset:
+ 446   
+ 447  tva(s) = 0;
+ 448  tva0(s) = 0;
+ 449   
+ 450  *       Scale indirect taxes based on tax revenue and tax base:
+ 451   
+ 452  ta(g)$ta0(g) = ta0(g)/a0(g);
+ 453  tm(g)$tm0(g) = tm0(g)/m0(g);
+ 454   
+ 455  *       Direct tax payments and receipts:
+ 456   
+ 457  dtax0(h) = direct0(h,"receipt");
+ 458  dtax0("ent") = direct0("ent","receipt");
+ 459  dtax0("govt") = dtax0("ent") + sum(h,dtax0(h));
+ 460  display dtax0;
+ 461   
+ 462   
+ 463   
+ 464  *       Household consumption of market and non-market goods:
+ 465   
+ 466  c0(h) = sum(g,cn0(g,h)+cm0(g,h));
+ 467   
+ 468  *       Transfers are defined implicitly:
+ 469   
+ 470  trn0(h) = c0(h) + hs0(h) + dtax0(h) - sum(f, fe0(h,f)) - hp0(h);
+ 471  trn0("ent") = sum(h,hp0(h)) + dtax0("ent") + hs0("ent") - sum(f, fe0("ent",f));
+ 472  trn0("row") = fsav0 - sum(f, fe0("row",f));
+ 473   
+ 474  *       Government factor endowments are likewise defined implicitly:
+ 475   
+ 476  fe0("govt",f) = round(sum(s, fd0(f,s)) - sum(h, fe0(h,f)) - fe0("ent",f) - fe0("row",f),6);
+ 477   
+ 478  *       Government deficit:
+ 479   
+ 480  govdef = sum(g,g0(g)+stk0(g))+gsav0-sum(g,m0(g)*tm(g)+a0(g)*ta(g))- dtax0("govt")-sum(f, fe0("govt",f));
+ 481   
+ 482  set             mg(g)           Margin commodity;
+ 483  mg(g) = yes$(msd0(g)+msm0(g));
+ 484  display mg;
+ 485   
+ 486   
+ 487  abort$(card(mg)>1) "Dataset must have a single margin commodity.";
+ 488  pm0(g) = 1 + tm(g);
+ 489   
+ 490  set             gs(*)   Sectors which have associated goods;
+ 491  gs(g) = yes;
+ 492   
+ 493  *       Produce an echo-print of benchmark values:
+ 494   
+ 495  parameter       sstats          Base year sectoral statistics
+ 496                  mstats          Market statistics:
+ 497                  gstats          Government budget statistics;
+ 498   
+ 499  sstats(s,"nmkt%") = sh0(s)/(sh0(s)+sum(g,s0(s,g)));
+ 500  sstats(s,"export%") = 100 * sum(g,s0(s,g)*x0(g)/ym0(g)) / (sh0(s)+sum(g,s0(s,g)));
+ 501  sstats(s,"id%") = 100 * sum(g,id0(g,s))/(sh0(s)+sum(g,s0(s,g)));
+ 502  sstats(s,f)$fd0(f,s) = 100 * fd0(f,s)/sum(ff,fd0(ff,s));
+ 503  sstats(s,"tva%") = 100 * tva(s);
+ 504  option sstats:1;
+ 505  display sstats,
+ 506          "nmkt%          Non-market supply as percentage of sectoral output",
+ 507          "export%        Percentage of sectoral output which is exported",
+ 508          "id%            Intermediate demand as percentage of sectoral output",
+ 509          "K,L            Factor share of value-added",
+ 510          "tva%           Value-added tax rate";
+ 511   
+ 512   
+ 513  mstats(g,"export%") = 100 * x0(g)/ym0(g);
+ 514  mstats(g,"import%") = 100 * (m0(g)*pm0(g)+mdm0(g))/(a0(g)*(1-ta(g)));
+ 515  mstats(g,"ta%") = 100 * ta(g);
+ 516  mstats(g,"tm%") = 100 * tm(g);
+ 517  mstats(g,"mdd%")$(mdd0(g)+d0(g)) = mdd0(g)/(mdd0(g)+d0(g));
+ 518  mstats(g,"mdm%")$(mdm0(g)+m0(g)*pm0(g)) = mdm0(g)/(mdm0(g)+m0(g)*pm0(g));
+ 519  mstats(g,"c%") = 100 * sum(h,cm0(g,h)) / sum((gg,h),cm0(gg,h));
+ 520  mstats(g,"x%") = 100 * x0(g)/sum(gg,x0(gg));
+ 521  mstats(g,"m%") = 100 * m0(g)/sum(gg,m0(gg));
+ 522  mstats(g,"m/c%")$sum(h,cm0(g,h)+cn0(g,h)) = 100 * sum(h,cm0(g,h))/sum(h,cm0(g,h)+cn0(g,h));
+ 523  option mstats:1;
+ 524  display mstats,
+ 525          "export%        Percentage of domestic supply which is exported",
+ 526          "import%        Percentage of domestic aborption which is imported",
+ 527          "ta%            Commodity tax rate",
+ 528          "tm%            Import tariff rate",
+ 529          "mdd%           Distribution margin on domestic goods",
+ 530          "mdm%           Distribution margin on imported goods",
+ 531          "c%             Commodity share of household market demand",
+ 532          "x%             Commodity share of total exports",
+ 533          "m%             Commodity share of total imports",
+ 534          "m/c%           Market share of final demand including non-market supply";
+ 535   
+ 536   
+ 537  parameter       gincome Components of government income;
+ 538  gincome("ent","dtax") = dtax0("ent");
+ 539  gincome(h,"dtax") = dtax0(h);
+ 540  gincome(g,"ta") = ta(g)*a0(g);
+ 541  gincome(s,"tva") = tva(s)*sum(f,fd0(f,s));
+ 542  gincome(g,"tm") = tm(g)*m0(g);
+ 543  gincome(f,"fendow") = fe0("govt",f);
+ 544  gincome(g,"stock") = stk0(g);
+ 545  gincome("row","def") = govdef + sum(f,fe0("row",f));
+ 546  display gincome;
+ 547   
+      $MODEL:IFPRI
+       
+      $SECTORS:
+              Y(s)$y0(s)      ! Sectoral production
+              X(g)            ! Supply of goods
+              A(g)            ! Armington supply
+              CD(h)           ! Household consumption
+              ID              ! Investment demand
+              GOV             ! Government demand
+       
+      $COMMODITIES:
+              PA(g)           ! Armington price
+              PC(h)           ! Household consumption
+              PY(g)           ! Goods output
+              PN(s)$sh0(s)    ! Non-market output
+              PD(g)$d0(g)     ! Domestic market price
+              PINV            ! Price of investment
+              PENT            ! Return to enterprise rents
+              PF(f)           ! Factor price
+              PG              ! Price of public goods
+              PFX             ! Foreign exchange
+       
+      $CONSUMERS:
+              RA(h)           ! Household
+              ENT             ! Enterprises
+              GOVT            ! Government
+              ROW             ! Foreign factor holdings
+       
+      $AUXILIARY:
+              FSAV            ! Foreign saving
+              GSAV            ! Government saving
+              DTAX            ! Direct taxes
+              CAPFLOW         ! Foreign capital inflow
+              DEMAND          ! Aggregate demand (level of savings and public expenditure)
+              TOTABS          ! Total absorption
+       
+      *       Commodity supply to domestic and export markets governed by a constant
+      *       elasticity of transformation supply function:
+       
+      $prod:X(g)  eta(g)
+              o:PFX           q:x0(g)         
+              o:PD(g)         q:d0(g)         
+              i:PY(g)         q:(x0(g)+d0(g))
+              
+       
+      *       Sectoral production combines primary factors and intermediate inputs
+      *       to produce goods and services which are both marketed and distributed
+      *       directly to households.  Market and non-market output are allocated
+      *       according to a constant elasticity of transformation function.
+      *       A nested constant elasticity of substitution cost function characterizes
+      *       the trade-off between intermediate inputs and primary factor inputs:
+       
+      $prod:Y(s)$y0(s)  t:4 s:esub(s)  fd:esubv(s)
+              o:PY(g)         q:s0(s,g)
+              o:PN(s)         q:sh0(s)        
+              i:PA(g)         q:id0(g,s)
+              i:PF(f)         q:fd0(f,s)  p:(1+tva0(s))       a:govt  t:tva(s)   fd:
+       
+      *       Supply of domestic and imported goods involves collection of import
+      *       tariffs, the application of distribution margins and the collection
+      *       of other indirect taxes:
+       
+      $prod:A(g)  s:sigma(g)  m:0 d:0
+              o:PA(g)         q:a0(g)         a:GOVT  t:ta(g)
+              i:PA(mg)        q:mdd0(g)       d:
+              i:PD(g)         q:d0(g)         d:
+              i:PA(mg)        q:mdm0(g)       m:
+              i:PFX           q:m0(g)         m: p:pm0(g) a:GOVT  t:tm(g)
+       
+      *       Generate report variables corresponding to exports and imports:
+       
+      $report:
+              v:EXPT(g)$x0(g) o:PFX   prod:X(g)
+              v:IMPT(g)$m0(g) i:PFX   prod:A(g)
+       
+      *       Government demand (corresponding to current public expenditures,
+      *       social expenditures and public investment):
+       
+      $prod:GOV  s:0
+              o:PG            q:(sum(g,g0(g)))
+              i:PA(g)         q:g0(g)
+       
+      *       Household demand for market and non-market goods and services:
+       
+      $prod:CD(h) s:1  g.tl:4
+              o:PC(h)         q:c0(h)
+              i:PN(s)         q:cn0(s,h) s.tl:$gs(s)
+              i:PA(g)         q:cm0(g,h) g.tl:
+       
+      *       Private investment:
+       
+      $prod:ID  s:0
+              o:PINV          q:(sum(g,i0(g)))
+              i:PA(g)         q:i0(g)
+       
+       
+      *       Household income and expenditure:
+       
+      $demand:RA(h)  
+              d:PC(h)
+              e:PF(f)         Q:fe0(h,f)                      ! Factor income
+              e:PENT          Q:hp0(h)                        ! Household claims on enterprise profits
+              e:PFX           Q:trn0(h)                       ! Net transfers 
+              e:PINV          Q:(-hs0(h))     R:DEMAND        ! Private savings (proportional to DEMAND)
+              e:PG            Q:(-dtax0(h))   R:DTAX          ! Direct tax payments (proportional to DTAX)
+       
+      *       Enterprises:
+       
+      $demand:ENT
+              d:PENT                                          ! Net income is distributed through the PENT market
+              e:PF(f)         Q:fe0("ent",f)                  ! Factor income
+              e:PFX           Q:trn0("ent")                   ! Net transfers
+              e:PINV          Q:(-hs0("ent")) R:DEMAND        ! Enterprise savings (proportional to DEMAND)
+              e:PG            Q:(-dtax0("ent")) R:DTAX        ! Direct tax payments (proportional to DTAX)
+       
+      *       Foreign workers:
+       
+      $demand:ROW
+              d:PFX                                           ! Assume full remittance of earnings.
+              e:PF(f)         Q:fe0("row",f)                  ! Factor income
+       
+      $demand:GOVT
+              d:PG                                            ! Demand for public goods and services
+              e:PA(g)         Q:(-stk0(g))                    ! Stock
+              e:PF(f)         Q:fe0("govt",f)                 ! Factor income
+              e:PINV          Q:(-gsav0)      R:GSAV          ! Government savings (proportional to GSAV)
+              e:PG            Q:dtax0("govt") R:DTAX          ! Income from direct tax payments (proportional to DTAX)
+              e:PINV          Q:(-fsav0)      R:FSAV          ! Investment demand from foreign savings (proportional to FSAV)
+              e:PFX           Q:fsav0         R:CAPFLOW       ! Current account inflows (proportional to FSAV)
+              e:PFX           Q:govdef                        ! Government deficit is fixed
+              
+      *       Define an index of total absorption based on value of 
+      *       market supply at base year prices:
+       
+      $constraint:TOTABS
+              TOTABS =E= sum(g, a0(g)*A(g)) / sum(g,a0(g));
+       
+      *       Index of the level of foreign savings:
+       
+      $constraint:FSAV
+       
+      *       If the exchange rate is flexible, then foreign savings are equal to the fixed level
+      *       of transfers plus the level of foreign factor earnings:
+       
+              (fsav0 * FSAV * PINV - (trn0("row")*PFX + sum(f, fe0("ROW",f)*PF(f))))$(flexiblePFX) +
+       
+      *       If the exchange rates is fixed, FSAV is determined as an equilibrium variable which
+      *       assures that the real exchange rate (defined here as a basket of consumer price indices)
+      *       is fixed exogenously:
+       
+              (PFX * sum(h, c0(h)) - sum(h, PC(h)*c0(h)) )$(not flexiblePFX)  =e= 0;
+       
+      *       Assume that any change in foreign savings is financed through capital flows:
+       
+      $constraint:CAPFLOW
+              CAPFLOW*PFX =E= FSAV*PINV;
+       
+      *       Index of the level of government saving:
+       
+      $constraint:GSAV
+              (GOV   - DEMAND)$(not eqyield) + 
+              (GSAV  -      1)$eqyield =e= 0;
+       
+      *       Index of the level of direct taxes:
+       
+      $constraint:DTAX
+              (GOV   - DEMAND)$eqyield +
+              (DTAX  -      1)$(not eqyield) =e= 0;
+       
+      *       Aggregate investment and public demand are either equal to the index
+      *       of total absorption or they remain fixed at the base year level:
+       
+      $constraint:DEMAND
+              DEMAND =e= TOTABS$(not fixedGS) + 1$fixedGS;
+       
+SYSINCLUDE C:\GAMS\44\MPSGESET
+ 728  * Default values for named arguments
+ 738   
+INCLUDE    C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\225a\gamsgeh.dat
+       
+      MPSGE PREPROCESSOR VERSION 12/95
+          1
+          2  $SECTORS:
+          3          Y(s)$y0(s)      ! Sectoral production
+          4          X(g)            ! Supply of goods
+          5          A(g)            ! Armington supply
+          6          CD(h)           ! Household consumption
+          7          ID              ! Investment demand
+          8          GOV             ! Government demand
+          9
+         10  $COMMODITIES:
+         11          PA(g)           ! Armington price
+         12          PC(h)           ! Household consumption
+         13          PY(g)           ! Goods output
+         14          PN(s)$sh0(s)    ! Non-market output
+         15          PD(g)$d0(g)     ! Domestic market price
+         16          PINV            ! Price of investment
+         17          PENT            ! Return to enterprise rents
+         18          PF(f)           ! Factor price
+         19          PG              ! Price of public goods
+         20          PFX             ! Foreign exchange
+         21
+         22  $CONSUMERS:
+         23          RA(h)           ! Household
+         24          ENT             ! Enterprises
+         25          GOVT            ! Government
+         26          ROW             ! Foreign factor holdings
+         27
+         28  $AUXILIARY:
+         29          FSAV            ! Foreign saving
+         30          GSAV            ! Government saving
+         31          DTAX            ! Direct taxes
+         32          CAPFLOW         ! Foreign capital inflow
+         33          DEMAND          ! Aggregate demand (level of savings and public expenditure)
+         34          TOTABS          ! Total absorption
+         35
+         36  *       Commodity supply to domestic and export markets governed by a constant
+         37  *       elasticity of transformation supply function:
+         38
+         39  $prod:X(g)  eta(g)
+         40          o:PFX           q:x0(g)
+         41          o:PD(g)         q:d0(g)
+         42          i:PY(g)         q:(x0(g)+d0(g))
+         43
+         44
+         45  *       Sectoral production combines primary factors and intermediate inputs
+         46  *       to produce goods and services which are both marketed and distributed
+         47  *       directly to households.  Market and non-market output are allocated
+         48  *       according to a constant elasticity of transformation function.
+         49  *       A nested constant elasticity of substitution cost function characterizes
+         50  *       the trade-off between intermediate inputs and primary factor inputs:
+         51
+         52  $prod:Y(s)$y0(s)  t:4 s:esub(s)  fd:esubv(s)
+         53          o:PY(g)         q:s0(s,g)
+         54          o:PN(s)         q:sh0(s)
+         55          i:PA(g)         q:id0(g,s)
+         56          i:PF(f)         q:fd0(f,s)  p:(1+tva0(s))       a:govt  t:tva(s)   fd:
+         57
+         58  *       Supply of domestic and imported goods involves collection of import
+         59  *       tariffs, the application of distribution margins and the collection
+         60  *       of other indirect taxes:
+         61
+         62  $prod:A(g)  s:sigma(g)  m:0 d:0
+         63          o:PA(g)         q:a0(g)         a:GOVT  t:ta(g)
+         64          i:PA(mg)        q:mdd0(g)       d:
+         65          i:PD(g)         q:d0(g)         d:
+         66          i:PA(mg)        q:mdm0(g)       m:
+         67          i:PFX           q:m0(g)         m: p:pm0(g) a:GOVT  t:tm(g)
+         68
+         69  *       Generate report variables corresponding to exports and imports:
+         70
+         71  $report:
+         72          v:EXPT(g)$x0(g) o:PFX   prod:X(g)
+         73          v:IMPT(g)$m0(g) i:PFX   prod:A(g)
+         74
+         75  *       Government demand (corresponding to current public expenditures,
+         76  *       social expenditures and public investment):
+         77
+         78  $prod:GOV  s:0
+         79          o:PG            q:(sum(g,g0(g)))
+         80          i:PA(g)         q:g0(g)
+         81
+         82  *       Household demand for market and non-market goods and services:
+         83
+         84  $prod:CD(h) s:1  g.tl:4
+         85          o:PC(h)         q:c0(h)
+         86          i:PN(s)         q:cn0(s,h) s.tl:$gs(s)
+         87          i:PA(g)         q:cm0(g,h) g.tl:
+         88
+         89  *       Private investment:
+         90
+         91  $prod:ID  s:0
+         92          o:PINV          q:(sum(g,i0(g)))
+         93          i:PA(g)         q:i0(g)
+         94
+         95
+         96  *       Household income and expenditure:
+         97
+         98  $demand:RA(h)
+         99          d:PC(h)
+        100          e:PF(f)         Q:fe0(h,f)                      ! Factor income
+        101          e:PENT          Q:hp0(h)                        ! Household claims on enterprise profits
+        102          e:PFX           Q:trn0(h)                       ! Net transfers
+        103          e:PINV          Q:(-hs0(h))     R:DEMAND        ! Private savings (proportional to DEMAND)
+        104          e:PG            Q:(-dtax0(h))   R:DTAX          ! Direct tax payments (proportional to DTAX)
+        105
+        106  *       Enterprises:
+        107
+        108  $demand:ENT
+        109          d:PENT                                          ! Net income is distributed through the PENT market
+        110          e:PF(f)         Q:fe0("ent",f)                  ! Factor income
+        111          e:PFX           Q:trn0("ent")                   ! Net transfers
+        112          e:PINV          Q:(-hs0("ent")) R:DEMAND        ! Enterprise savings (proportional to DEMAND)
+        113          e:PG            Q:(-dtax0("ent")) R:DTAX        ! Direct tax payments (proportional to DTAX)
+        114
+        115  *       Foreign workers:
+        116
+        117  $demand:ROW
+        118          d:PFX                                           ! Assume full remittance of earnings.
+        119          e:PF(f)         Q:fe0("row",f)                  ! Factor income
+        120
+        121  $demand:GOVT
+        122          d:PG                                            ! Demand for public goods and services
+        123          e:PA(g)         Q:(-stk0(g))                    ! Stock
+        124          e:PF(f)         Q:fe0("govt",f)                 ! Factor income
+        125          e:PINV          Q:(-gsav0)      R:GSAV          ! Government savings (proportional to GSAV)
+        126          e:PG            Q:dtax0("govt") R:DTAX          ! Income from direct tax payments (proportional to DTAX)
+        127          e:PINV          Q:(-fsav0)      R:FSAV          ! Investment demand from foreign savings (proportional to FSAV)
+        128          e:PFX           Q:fsav0         R:CAPFLOW       ! Current account inflows (proportional to FSAV)
+        129          e:PFX           Q:govdef                        ! Government deficit is fixed
+        130
+        131  *       Define an index of total absorption based on value of
+        132  *       market supply at base year prices:
+        133
+        134  $constraint:TOTABS
+        135          TOTABS =E= sum(g, a0(g)*A(g)) / sum(g,a0(g));
+        136
+        137  *       Index of the level of foreign savings:
+        138
+        139  $constraint:FSAV
+        140
+        141  *       If the exchange rate is flexible, then foreign savings are equal to the fixed level
+        142  *       of transfers plus the level of foreign factor earnings:
+        143
+        144          (fsav0 * FSAV * PINV - (trn0("row")*PFX + sum(f, fe0("ROW",f)*PF(f))))$(flexiblePFX) +
+        145
+        146  *       If the exchange rates is fixed, FSAV is determined as an equilibrium variable which
+        147  *       assures that the real exchange rate (defined here as a basket of consumer price indices)
+        148  *       is fixed exogenously:
+        149
+        150          (PFX * sum(h, c0(h)) - sum(h, PC(h)*c0(h)) )$(not flexiblePFX)  =e= 0;
+        151
+        152  *       Assume that any change in foreign savings is financed through capital flows:
+        153
+        154  $constraint:CAPFLOW
+        155          CAPFLOW*PFX =E= FSAV*PINV;
+        156
+        157  *       Index of the level of government saving:
+        158
+        159  $constraint:GSAV
+        160          (GOV   - DEMAND)$(not eqyield) +
+        161          (GSAV  -      1)$eqyield =e= 0;
+        162
+        163  *       Index of the level of direct taxes:
+        164
+        165  $constraint:DTAX
+        166          (GOV   - DEMAND)$eqyield +
+        167          (DTAX  -      1)$(not eqyield) =e= 0;
+        168
+        169  *       Aggregate investment and public demand are either equal to the index
+        170  *       of total absorption or they remain fixed at the base year level:
+        171
+        172  $constraint:DEMAND
+        173          DEMAND =e= TOTABS$(not fixedGS) + 1$fixedGS;
+        174
+        175  $OFFTEXT
+       
+       
+      Symbol Listing
+       
+      Note:   Parameter and set references appearing within
+              parentheses are not identified by the preprocessor.
+       
+      Symbol      Type       References
+      ==========  =====      ==================================================
+      "ENT"       SET           110  111
+      "GOVT"      SET           124  126
+      "ROW"       SET           119
+      A           ACTIV           5   62   73
+      A0          PARAM          63
+      C0          PARAM          85
+      CAPFLOW     AUXIL          32  128
+      CD          ACTIV           6   84
+      CM0         PARAM          87
+      CN0         PARAM          86
+      D0          PARAM          41   65
+      DEMAND      AUXIL          33  103  112
+      DTAX        AUXIL          31  104  113  126
+      DTAX0       PARAM         126
+      ENT         CONSU          24  108
+      ESUB        PARAM          52
+      ESUBV       PARAM          52
+      EXPT        REPRT          72
+      F           SET            18   56   56  100  100  110  110  119  119  124
+                                124
+      FD0         PARAM          56
+      FE0         PARAM         100  110  119  124
+      FSAV        AUXIL          29  127
+      FSAV0       PARAM         128
+      G           SET             4   39   40   41   41   42   53   53   55   55
+                                 62   62   63   63   63   64   65   65   66   67
+                                 67   67   72   72   73   73   80   80   87   87
+                                 93   93  123
+      G0          PARAM          80
+      GOV         ACTIV           8   78
+      GOVDEF      PARAM         129
+      GOVT        CONSU          25   56   63   67  121
+      GSAV        AUXIL          30  125
+      H           SET             6   84   85   85   86   87   98   99  100  101
+                                102
+      HP0         PARAM         101
+      I0          PARAM          93
+      ID          ACTIV           7   91
+      ID0         PARAM          55
+      IMPT        REPRT          73
+      M0          PARAM          67
+      MDD0        PARAM          64
+      MDM0        PARAM          66
+      MG          SET            64   66
+      PA          PRICE          11   55   63   64   66   80   87   93  123
+      PC          PRICE          12   85   99
+      PD          PRICE          15   41   65
+      PENT        PRICE          17  101  109
+      PF          PRICE          18   56  100  110  119  124
+      PFX         PRICE          20   40   67   72   73  102  111  118  128  129
+      PG          PRICE          19   79  104  113  122  126
+      PINV        PRICE          16   92  103  112  125  127
+      PM0         PARAM          67
+      PN          PRICE          14   54   86
+      PY          PRICE          13   42   53
+      RA          CONSU          23   98
+      ROW         CONSU          26  117
+      S           SET             3   52   52   52   53   54   54   55   56   56
+                                 86   86
+      S0          PARAM          53
+      SH0         PARAM          54
+      SIGMA       PARAM          62
+      TA          PARAM          63
+      TM          PARAM          67
+      TOTABS      AUXIL          34
+      TRN0        PARAM         102  111
+      TVA         PARAM          56
+      X           ACTIV           4   39   72
+      X0          PARAM          40
+      Y           ACTIV           3   52
+       
+1165   
+1168  IFPRI.INTEGER1=1;
+EXIT C:\GAMS\44\MPSGESET
+1171   
+1172  GSAV.LO = -INF;
+1173  DTAX.LO = -INF;
+1174  DEMAND.LO = -INF;
+1175  FSAV.LO = -INF;
+1176  CAPFLOW.LO = -INF;
+1177   
+1178  CAPFLOW.L = 1;
+1179  FSAV.L = 1;
+1180  GSAV.L = 1;
+1181  DTAX.L = 1;
+1182  DEMAND.L = 1;
+1183  TOTABS.L = 1;
+1184   
+1185   
+1186  execute_unload "../../data/ifpri.gdx";
+1187   
+EXIT C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\ifprimpsge.gms
+GAMS 44.2.0  7d8c2acc Aug 17, 2023          WEX-WEI x86 64bit/MS Windows - 07/10/25 07:15:17 Page 2
+The Standard IFPRI Model Implemented in MPSGE
+Include File Summary
+
+
+   SEQ   GLOBAL TYPE      PARENT   LOCAL  FILENAME
+
+     1        1 INPUT          0       0  C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\ifprimpsge.gms
+     2       80 IF EXIST       1      80  C:\Users\Mitch\Documents\Modeling\IFPRI_model\data\sam2004.gdx
+     3       81 GDXIN          1      81  C:\Users\Mitch\Documents\Modeling\IFPRI_model\data\sam2004.gdx
+     4      725 SYSINCLUDE     1     725  .C:\GAMS\44\MPSGESET
+     5      755 CALL           4      38  .gmsge_nx "C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\225a\gamscge.dat"
+     6      757 INCLUDE        4      40  ..C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\225a\gamsgeh.dat
+     7     1170 EXIT           4      42  .C:\GAMS\44\MPSGESET
+     8     1188 EXIT           1     743  C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\ifprimpsge.gms
+
+
+COMPILATION TIME     =        0.078 SECONDS      3 MB  44.2.0 7d8c2acc WEX-WEI
+GAMS 44.2.0  7d8c2acc Aug 17, 2023          WEX-WEI x86 64bit/MS Windows - 07/10/25 07:15:17 Page 3
+The Standard IFPRI Model Implemented in MPSGE
+E x e c u t i o n
+
+
+----     98 PARAMETER chksam  Cross check on totals
+
+           row       col61         col       row61        diff       diff%
+
+1        6.090       6.090       6.090       6.090
+2        9.120       9.120       9.120       9.120 -1.7764E-15 -1.9478E-16
+3       47.369      47.369      47.369      47.369
+4       19.162      19.162      19.162      19.162 -7.1054E-15 -3.7081E-16
+5        8.020       8.020       8.020       8.020 3.55271E-15 4.43007E-16
+6        3.922       3.922       3.922       3.922
+7      108.811     108.811     108.811     108.811 -1.4211E-14 -1.3060E-16
+8       39.273      39.273      39.273      39.273 1.42109E-14 3.61851E-16
+9        6.682       6.682       6.682       6.682 -8.8818E-16 -1.3292E-16
+10      29.643      29.643      29.643      29.643 1.06581E-14 3.59552E-16
+11      16.882      16.882      16.882      16.882
+12      11.444      11.444      11.444      11.444 -7.1054E-15 -6.2090E-16
+13       5.764       5.764       5.764       5.764 1.77636E-15 3.08195E-16
+14     114.622     114.622     114.622     114.622 -4.2633E-14 -3.7194E-16
+15     111.943     111.943     111.943     111.943 -7.68858E-6 -6.86829E-8
+16      40.586      40.586      40.586      40.586
+17       6.300       6.300       6.300       6.300 -8.8818E-16 -1.4098E-16
+18       2.940       2.940       2.940       2.940
+19       1.526       1.526       1.526       1.526 2.22045E-16 1.45473E-16
+20      10.767      10.767      10.767      10.767
+21       6.443       6.443       6.443       6.443
+22      37.362      37.362      37.362      37.362 7.10543E-15 1.90179E-16
+23       1.539       1.539       1.539       1.539
+24      27.268      27.268      27.268      27.268 1.342000E-6 4.921477E-8
+25       7.271       7.271       7.271       7.271 -3.80000E-7 -5.22627E-8
+26      43.831      43.831      43.831      43.831 -3.77200E-6 -8.60573E-8
+27      32.632      32.632      32.632      32.632 -9.99999E-9 -3.0645E-10
+28      15.499      15.499      15.499      15.499 2.070000E-7 1.335581E-8
+29      26.666      26.666      26.666      26.666 5.341000E-6 2.002950E-7
+30      14.285      14.285      14.285      14.285 1.640000E-7 1.148083E-8
+31      23.823      23.823      23.823      23.823 5.450000E-7 2.287660E-8
+32      46.328      46.328      46.328      46.328 6.060000E-7 1.308070E-8
+33      34.234      34.234      34.234      34.234 -2.11400E-6 -6.17516E-8
+34       6.465       6.465       6.465       6.465 -1.76000E-7 -2.72251E-8
+35      10.303      10.303      10.303      10.303 -2.41000E-7 -2.33913E-8
+36      21.117      21.117      21.117      21.117 3.039000E-6 1.439153E-7
+37      52.727      52.727      52.727      52.727 -2.71400E-6 -5.14724E-8
+38      28.112      28.112      28.112      28.112 1.110000E-6 3.948526E-8
+39      43.808      43.808      43.808      43.808 -5.34291E-8 -1.21961E-9
+40       9.982       9.982       9.982       9.982 -5.37000E-7 -5.37962E-8
+41      55.906      55.906      55.906      55.906 -7.56000E-7 -1.35228E-8
+42      44.539      44.539      44.539      44.539 1.870000E-7 4.198589E-9
+43      23.349      23.349      23.349      23.349 -1.88837E-7 -8.08768E-9
+44      58.723      58.723      58.723      58.723 -7.29095E-7 -1.24158E-8
+45      29.242      29.242      29.242      29.242 4.363000E-6 1.492056E-7
+46      26.628      26.628      26.628      26.628 -9.96182E-7 -3.74113E-8
+47      47.429      47.429      47.429      47.429 1.394000E-6 2.939129E-8
+48      34.069      34.069      34.069      34.069 -1.70000E-7 -4.98989E-9
+49       6.447       6.447       6.447       6.447 1.240000E-7 1.923391E-8
+50      10.457      10.457      10.457      10.457 -6.33000E-7 -6.05319E-8
+51      20.682      20.682      20.682      20.682 -5.12000E-7 -2.47560E-8
+52      56.469      56.469      56.469      56.469 3.918126E-6 6.938487E-8
+53      18.721      18.721      18.721      18.721 -6.69000E-7 -3.57362E-8
+54      37.653      37.653      37.653      37.653
+55       9.777       9.777       9.777       9.777
+56      11.193      11.193      11.193      11.193 1.77636E-15 1.58705E-16
+57      17.209      17.209      17.209      17.209 3.55271E-15 2.06451E-16
+58       2.744       2.744       2.744       2.744
+59      43.335      43.335      43.335      43.335
+60       3.955       3.955       3.955       3.955
+61    1649.082    1645.128    1649.082    1645.128 2.27374E-13 1.37879E-16
+
+
+----    228 PARAMETER firms0  Activities of enterprises
+
+            payment     receipt
+
+row                       0.500
+cap                     108.811
+costau       18.723
+sierrau      15.763
+selvau        5.861
+lima         53.386
+costar        2.572
+sierrar       6.557
+selvar        2.476
+gvt           4.081       2.633
+cca           0.358
+dtax          2.167
+
+
+----    237 PARAMETER capital0  Elements of the combined capital account
+
+            payment     receipt
+
+row                      -0.187
+costau                    5.388
+sierrau                   2.939
+selvau                    0.130
+lima                     32.242
+costar                    0.545
+sierrar                  -0.964
+selvar                   -0.494
+agr           0.858
+txt           0.089
+mac          13.057
+con          20.657
+srv           1.161
+ent                       0.358
+gvt                      -2.596
+inv           1.539
+
+
+----    245 PARAMETER rent0  Elements of capital earnings
+
+        payment     receipt
+
+row                  -7.836
+agr                   9.637
+fsh                   2.688
+min                  13.048
+foo                   6.319
+txt                   3.171
+mac                   5.238
+chm                   3.722
+con                   6.268
+com                  18.507
+trn                   9.307
+hea                   1.189
+edu                   5.666
+gov                   0.099
+srv                  19.619
+htl                  12.170
+ent     108.811
+
+
+----    252 PARAMETER direct0  Direct tax payments
+
+            payment     receipt
+
+costau                    1.531
+sierrau                   1.050
+selvau                    0.407
+lima                      4.806
+costar                    0.263
+sierrar                   0.725
+selvar                    0.243
+ent                       2.167
+gvt          11.193
+
+
+----    333 Unextracted SAM data:
+
+----    333 PARAMETER sam  Social accounts
+
+             1           2           3           4           5           6           7           8           9          10          11          12          13          14          15          16          17          18          19          20          21          22          23          24          25          26          27          28          29          30          31          32          33          34          35          36          37          38          39          40          41          42          43          44          45          46          47          48          49          50          51          52          53          54          55          56          57          58          59          60          61
+
+1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        6.090
+2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        9.120
+3                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       47.369
+4                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       19.162
+5                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        8.020
+6                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        3.922
+7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      108.811
+8                                                                                            0.126       0.126       0.126       0.126       0.126       0.094       0.312      18.723       1.351       1.190       0.650       0.239                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           0.652                  39.273
+9                                                                                            0.018       0.018       0.018       0.018       0.018       0.014       0.046       2.572       0.498       0.387       0.112       0.226                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           0.040                   6.682
+10                                                                                           0.080       0.080       0.080       0.080       0.080       0.059       0.197      15.763       0.446       0.993       0.389       0.093                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           0.079                  29.643
+11                                                                                           0.051       0.051       0.051       0.051       0.051       0.038       0.126       6.557       0.404       1.930       0.170       0.514                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           0.012                  16.882
+12                                                                                           0.023       0.023       0.023       0.023       0.023       0.017       0.057       5.861       0.273       0.376       0.135       0.077                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           0.053                  11.444
+13                                                                                           0.010       0.010       0.010       0.010       0.010       0.007       0.025       2.476       0.116       0.484       0.082       0.151                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           0.003                   5.764
+14                                                                                           0.232       0.232       0.232       0.232       0.232       0.173       0.571      53.386       4.000       0.940       1.403       0.228                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           2.159                 114.622
+15                                                                             108.811                                                                                                       2.633                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               0.500                 111.943
+16                                                                                                                                                                               4.081                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      11.193      17.209       2.744       1.499       3.860      40.586
+17                                                                                                                                                                                           6.300                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       6.300
+18                                                                                                                                                                                           2.940                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       2.940
+19                                                                                                                                                                                           1.526                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       1.526
+20                                                                                           2.078       0.724       1.475       2.613       0.588       0.717       2.571                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              10.767
+21                                                                                                                                                                                           6.443                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       6.443
+22                                                                                           5.388       0.545       2.939      -0.964       0.130      -0.494      32.242       0.358      -2.596                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              -0.187                  37.362
+23                                                                                                                                                                                                                                                                   1.539                                                                                                                                                                                                                                                                                                                                                                                                                                                                               1.539
+24                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      27.268
+25                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       7.271
+26                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      43.831
+27                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      32.632
+28                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      15.499
+29                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      26.666
+30                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      14.285
+31                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      23.823
+32                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      46.328
+33                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      34.234
+34                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       6.465
+35                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      10.303
+36                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      21.117
+37                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      52.727
+38                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      28.112
+39                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      43.808
+40                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       9.982
+41                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      55.906
+42                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      44.539
+43                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      23.349
+44                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      58.723
+45                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      29.242
+46                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      26.628
+47                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      47.429
+48                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      34.069
+49                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       6.447
+50                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      10.457
+51                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      20.682
+52                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      56.469
+53                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      18.721
+54                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      37.653
+55                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       9.777
+56                                                                                           1.531       0.263       1.050       0.725       0.407       0.243       4.806       2.167                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  11.193
+57                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      17.209
+58                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       2.744
+59                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           0.094      43.335
+60                                                                                                                                                                                           3.955                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       3.955
+61       6.090       9.120      47.369      19.162       8.020       3.922     108.811      39.273       6.682      29.643      16.882      11.444       5.764     114.622     111.943      40.586       6.300       2.940       1.526      10.767       6.443      37.362       1.539      27.268       7.271      43.831      32.632      15.499      26.666      14.285      23.823      46.328      34.234       6.465      10.303      21.117      52.727      28.112      43.808       9.982      55.906      44.539      23.349      58.723      29.242      26.628      47.429      34.069       6.447      10.457      20.682      56.469      18.721      37.653       9.777      11.193      17.209       2.744      43.335       3.955    1645.128
+
+
+----    353 PARAMETER profit  Profit check for production and aggregate supply
+
+              y           a
+
+agr 1.342000E-6 -5.34291E-8
+fsh -3.80000E-7 -5.37000E-7
+min -3.77200E-6 -7.56000E-7
+foo -1.00000E-8 1.870000E-7
+txt 2.070000E-7 -1.88837E-7
+mac 5.341000E-6 -7.29095E-7
+chm 1.640000E-7 4.363000E-6
+con 5.450000E-7 -9.96182E-7
+com 6.060000E-7 1.394000E-6
+trn -2.11400E-6 -1.70000E-7
+hea -1.76000E-7 1.240000E-7
+edu -2.41000E-7 -6.33000E-7
+gov 3.039000E-6 -5.12000E-7
+srv -2.71400E-6 3.918126E-6
+htl 1.110000E-6 -6.69000E-7
+
+
+----    383 PARAMETER market  Market clearance
+
+               s0          x0          m0         tm0          md          ms         ta0         id0         cm0          i0         gd0         gs0         gi0        stk0         chk
+
+agr        25.616       2.883       4.148       0.201      13.484                   0.360      19.005      16.970       0.858                               0.154       3.938 5.342907E-8
+fsh         6.695       5.900       0.133       0.001       3.124                   0.029       2.205       3.700                                                      -1.823 5.370000E-7
+min        42.007      30.037       7.799       0.159       2.310                   3.632      25.562       3.971                                                      -3.664 7.560000E-7
+foo        28.870       1.785       3.096       0.289       7.140                   5.144      11.901      29.390                                                       1.462 -1.87000E-7
+txt        15.220       4.601       1.844       0.134       5.112                   1.039       9.640      11.926       0.089                               0.016      -2.923 1.888372E-7
+mac        26.387       2.825      17.178       1.521      11.568                   2.070      29.986      11.085      13.057                               2.348      -0.578 7.290954E-7
+chm        14.042       1.688       9.045       0.438       4.639                   1.078      15.843       7.277                                                       4.433 -4.36300E-6
+con        25.591                                                                   1.037       1.032       0.203      20.657                               3.715       1.021 9.961821E-7
+com        47.429                                                      47.429                                                                                                 -1.39400E-6
+trn        33.574                                                                   0.495      19.674      11.638                                                       2.756 1.700000E-7
+hea         6.447                                                                               0.014       5.564                                                       0.869 -1.24000E-7
+edu        10.362                                                                   0.096       0.687      10.488                                                      -0.717 6.330000E-7
+gov        20.682                                                                                           0.695                  12.297      10.767                  -3.076 5.120000E-7
+srv        54.596                                           0.051                   1.822      39.276      16.810       1.161                               0.209      -0.986 -3.91813E-6
+htl        18.310                                                                   0.410       2.048      15.844                                                       0.828 6.690000E-7
+total     375.827      49.720      43.241       2.742      47.429      47.429      17.211     176.872     145.561      35.822      12.297      10.767       6.443       1.539
+
+
+----    441 PARAMETER gsav0                =       -4.135  Government saving
+
+----    460 PARAMETER dtax0  Direct taxes
+
+costau   1.531,    sierrau  1.050,    selvau   0.407,    lima     4.806,    costar   0.263,    sierrar  0.725,    selvar   0.243,    ent      2.167,    govt    11.193
+
+
+----    484 SET mg  Margin commodity
+
+com
+
+
+----    505 PARAMETER sstats  Base year sectoral statistics
+
+         urbusk      urbskl     urbsusk     urbsskl      rurusk      rurskl         cap       nmkt%     export%         id%
+
+agr         4.3         4.5         3.3         2.7        29.9         5.6        49.7 4.297869E-2        10.7        28.9
+fsh         4.8         2.3        11.1         0.6         0.9         0.7        79.6 3.105455E-2        81.4        53.6
+min         3.2         0.1        26.6         0.3         1.5         1.0        67.3                    68.4        55.8
+foo         3.2         1.3        23.1         2.3         0.7         1.0        68.4         0.1         5.5        71.7
+txt         4.5         3.6        23.4         8.1         1.6         0.5        58.4 2.300228E-3        29.5        64.9
+mac         4.2         6.5        26.8         9.0         1.5         0.5        51.4 3.919933E-3        10.6        61.8
+chm         1.5         0.3        29.5         6.7         0.1 1.831541E-2        61.9                    11.5        57.9
+con         5.6         3.8        23.3        10.1         1.5         0.8        55.0             2.268145E-2        52.2
+com         1.7        11.4        13.6        15.4         2.0         1.1        54.8             1.542508E-2        27.1
+trn         3.3         7.3        21.3        14.9         1.2         1.4        50.6 2.005703E-4 1.048358E-3        46.3
+hea         1.7         1.8        43.1        21.1         0.4         1.0        30.9 1.685622E-3                    40.4
+edu         0.2 1.151085E-3        21.9         2.9 1.401842E-3         0.2        74.8 1.069122E-3 2.616586E-5        26.5
+gov         3.6                    84.9                     1.6         9.3         0.7                     0.2        31.9
+srv         2.0         1.7        23.0        15.7         0.3         0.9        56.4             5.564491E-4        34.0
+htl         4.3         5.3         8.5         6.2         1.4         0.5        73.7         0.4                    41.2
+
+
+----    505 nmkt%          Non-market supply as percentage of sectoral output
+            export%        Percentage of sectoral output which is exported
+            id%            Intermediate demand as percentage of sectoral output
+            K,L            Factor share of value-added
+            tva%           Value-added tax rate
+
+----    524 PARAMETER mstats  Market statistics:
+
+        export%     import%         ta%         tm%        mdd%        mdm%          c%          x%          m%        m/c%
+
+agr        11.3        15.2         0.9         4.8         0.3         0.3        11.7         5.8         9.6        93.5
+fsh        88.1         4.7         0.7         0.9         0.8         0.3         2.5        11.9         0.3        94.2
+min        71.5        37.4        14.0         2.0         0.1 4.347082E-2         2.7        60.4        18.0       100.0
+foo         6.2        10.7        12.0         9.3         0.2         0.2        20.2         3.6         7.2        90.3
+txt        30.2        14.3         5.5         7.2         0.3         0.2         8.2         9.3         4.3        99.7
+mac        10.7        43.2         3.7         8.9         0.2         0.2         7.6         5.7        39.7        99.1
+chm        12.0        42.7         3.9         4.8         0.2         0.2         5.0         3.4        20.9       100.0
+con                                 3.9                                             0.1                               100.0
+trn                                 1.5                                             8.0                                99.9
+hea                                                                                 3.8                                99.8
+edu                                 0.9                                             7.2                                99.9
+gov                                                                                 0.5                               100.0
+srv                                 3.2             9.411856E-4                    11.5                               100.0
+htl                                 2.2                                            10.9                                61.3
+
+
+----    524 export%        Percentage of domestic supply which is exported
+            import%        Percentage of domestic aborption which is imported
+            ta%            Commodity tax rate
+            tm%            Import tariff rate
+            mdd%           Distribution margin on domestic goods
+            mdm%           Distribution margin on imported goods
+            c%             Commodity share of household market demand
+            x%             Commodity share of total exports
+            m%             Commodity share of total imports
+            m/c%           Market share of final demand including non-market supply
+
+----    546 PARAMETER gincome  Components of government income
+
+               dtax          ta          tm       stock         def
+
+row                                                           6.960
+costau        1.531
+sierrau       1.050
+selvau        0.407
+lima          4.806
+costar        0.263
+sierrar       0.725
+selvar        0.243
+agr                       0.360       0.201       3.938
+fsh                       0.029       0.001      -1.823
+min                       3.632       0.159      -3.664
+foo                       5.144       0.289       1.462
+txt                       1.039       0.134      -2.923
+mac                       2.070       1.521      -0.578
+chm                       1.078       0.438       4.433
+con                       1.037                   1.021
+trn                       0.495                   2.756
+hea                                               0.869
+edu                       0.096                  -0.717
+gov                                              -3.076
+srv                       1.822                  -0.986
+htl                       0.410                   0.828
+ent           2.167
+
+
+
+EXECUTION TIME       =        0.000 SECONDS      4 MB  44.2.0 7d8c2acc WEX-WEI
+
+
+USER: Small MUD - 5 User License                     G250318|0002AO-GEN
+      University of Wisconsin-Madison, Agricultural & Applied EconDC289
+      License for teaching and research at degree granting institutions
+
+
+**** FILE SUMMARY
+
+Input      C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\ifprimpsge.gms
+Output     C:\Users\Mitch\Documents\Modeling\IFPRI_model\src\gams\ifprimpsge.lst

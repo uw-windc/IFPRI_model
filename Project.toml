@@ -1,0 +1,17 @@
+name = "IFPRI_model"
+uuid = "7926c5eb-9a0e-4fdf-bbec-a52856219062"
+authors = ["Mitch Phillipson <mitch.phillipson@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+MPSGE = "d5dc2f44-7ae2-49e9-bc77-b47b6bca565d"
+NamedArrays = "86f7a689-2022-50b4-a561-43c23ac3c673"
+XLSX = "fdbf4ff8-1666-58a4-91e7-1b58723a45e0"
+
+[compat]
+JSON = "0.21.4"
+NamedArrays = "0.10.4"

@@ -1,0 +1,16 @@
+uni,element_text
+agr,"Agropecuaria, caza, silvicultura"
+fsh,"Pesca, preservacion, harina y aceite de pescado"
+min,"Extraccion de minerales, extraccion de petroleo"
+foo,"Bebidas y tabaco, lacteos y otros productos alimenticios, molineria y panaderia, azucar"
+txt,"Productos textiles, prendas de vestir, cuero y articulos de cuero, calzado"
+mac,"Maquinaria y equipo, material de transporte, muebles de madera y metal, productos de metal, caucho y plastico y otros manufacturados"
+chm,"Productos quimicos basicos, abonos, y productos farmaceuticos, productos de papel, impresion y edicion"
+con,Construccion
+com,Comercio
+trn,Transportes y comunicaciones
+hea,Salud
+edu,Educacion
+gov,Servicios gubernamentales
+srv,"Servicios financieros y de seguros, servicios a empresas, servicios mercantes a hogares"
+htl,"Restaurantes y hoteles, servicios no mercantes a hogares, alquiler de vivienda"
