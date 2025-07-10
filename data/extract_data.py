@@ -22,7 +22,6 @@ w = gt.Container(r"ifpri.gdx")
 
 
 
-
 # %%
 
 value_info = {}
@@ -46,6 +45,8 @@ used_sets = [
     "g",
     "h",
     "f",
+    "mg",
+    "gs"
 ]
 
 sets = {s: sets[s] for s in sets if s in used_sets}

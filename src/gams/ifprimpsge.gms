@@ -690,7 +690,7 @@ $constraint:FSAV
 *       If the exchange rate is flexible, then foreign savings are equal to the fixed level
 *       of transfers plus the level of foreign factor earnings:
 
-        (fsav0 * FSAV * PINV - (trn0("row")*PFX + sum(f, fe0("ROW",f)*PF(f))))$(flexiblePFX) +
+        (fsav0 * FSAV * PINV - (trn0("row")*PFX + sum(f, fe0("ROW",f)*PF(f))) )$(flexiblePFX) +
 
 *       If the exchange rates is fixed, FSAV is determined as an equilibrium variable which
 *       assures that the real exchange rate (defined here as a basket of consumer price indices)
@@ -707,7 +707,7 @@ $constraint:CAPFLOW
 
 $constraint:GSAV
         (GOV   - DEMAND)$(not eqyield) + 
-        (GSAV  -      1)$eqyield =e= 0;
+        (GSAV  -      1)$eqyield =e= 0; 
 
 *       Index of the level of direct taxes:
 
@@ -738,13 +738,15 @@ DEMAND.L = 1;
 TOTABS.L = 1;
 
 
-execute_unload "ifpri.gdx"
-$exit
+
 
 IFPRI.iterlim = 0;
 $include IFPRI.gen
 solve IFPRI using mcp;
 IFPRI.iterlim = 2000;
+
+$exit
+
 
 $if not set uftsim $exit
 

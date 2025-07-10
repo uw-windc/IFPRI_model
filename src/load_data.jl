@@ -36,9 +36,13 @@ end
 
 
 
-function extract_set_from_domain_element(element::String, parameter::DataFrame, sets::Dict{Symbol, Any})
+function extract_set_from_domain_element(element::String, parameter::DataFrame, sets::Dict{Symbol, Any}; param_name = missing)
     if element == "uni"
-        return unique(parameter[!, element])
+        L = unique(parameter[!, element])
+        if !ismissing(param_name) && param_name == "fe0"
+            push!(L, "govt")
+        end
+        return L
     else
         return sets[Symbol(element)]
     end
@@ -76,7 +80,7 @@ function load_data(dir_path::String = "@__dir__/../data/pre_model")
             all_values[Symbol(param_name)] = df[1,1]
             continue
         else
-            full_domain = extract_set_from_domain_element.(domain, Ref(df), Ref(all_values))
+            full_domain = [extract_set_from_domain_element(d, df, all_values; param_name = param_name) for d in domain]
             if length(full_domain) == 1
                 all_values[Symbol(param_name)] = NamedArray(zeros(length.(full_domain)...), full_domain...)
             else
