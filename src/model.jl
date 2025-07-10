@@ -209,9 +209,6 @@ function IFPRI_mpsge(data;
         DEMAND - ifelse(fixedGS !=0, 1, TOTABS)
     )
 
-    # ?? Bug in MPSGE?
-    set_start_value(GOVT, 29.5062)
-
     return M
 
 end
