@@ -241,3 +241,5 @@ __marimo__/
 
 
 *.gdx
+*.GEN
+*.lst
