@@ -1,0 +1,568 @@
+$TITLE Input file: 1dmodel.dat. IFPRI Extended standard recursive dynamic CGE modeling system, Version 2.00
+
+$ontext
+Version 2.00 Release date: July 2005
+Last update:
+
+This file includes country-specific model data.
+Signals to the user who is constructing his/her own data set:
+"!!" -- read carefully; perhaps need to supply information
+
+The file is divided into the following searchable blocks:
+1. SET DEFINITIONS
+2. SAM
+3. ELASTICITIES
+4. PHYSICAL FACTOR QUANTITIES
+5. COMMODITY VALUE SHARES FOR HOME CONSUMPTION
+6. INITIALIZATION OF TAX DATA
+
+$offtext
+
+SCALAR
+ AGGREGATE       aggregate households (0 for no - 1 for yes)       / 0 /
+;
+
+*--------------------------------------------------------------------------------------------
+*1. SET DEFINITIONS -------------------------------------------------------------------------
+*--------------------------------------------------------------------------------------------
+
+$ontext
+
+Instructions:
+
+!!-1. In this section, the user should DEFINE all sets (by entering the
+names of set elements). The only exception (which is signaled when
+relevant) is for sets that are not invariably included in the SAM --
+their element lists may be left blank. The user should NOT change set
+names.
+
+
+!!-2. The set AC has to include the following elements:
+ GOV           government
+ ROW           rest of the world
+ S-I           savings-investment
+ DSTK          stock changes
+
+ TRNCSTDOM     domestic transactions cost account
+ TRNCSTEXP     export transactions cost account
+ TRNCSTIMP     import transactions cost account
+
+ INSTAX        direct taxes on domestic institutions
+ FACTAX        direct factor taxes
+ IMPTAX        import taxes
+ EXPTAX        export taxes
+ VATAX         value-added taxes
+ ACTTAX        indirect taxes on activity revenue
+ COMTAX        indirect taxes on commodity sales in domestic market
+ DUM           dummy
+
+ TOTAL         total
+
+
+Comments on the above list:
+
+a. The name TOTAL is also compulsory in the SAM.
+
+b. If the SAM includes a government, the rest of the world, savings-
+investment and/or stock changes, then the above account names (GOV, ROW,
+S-I, DSTK) have to be used for these entities.
+
+c. The elements that are related to transactions costs and taxes as well
+as the dummy account are used for reports. In the SAM, any other names
+may be used (subject to the restrictions imposed by GAMS syntax).
+
+d. In addition, the tax elements are used for model calibration. Later
+in this file, the user will be prompted to supply the names of the SAM
+accounts that correspond to these elements (see the parameter TAXPAR).
+Taxes have to be paid to special tax accounts that, in their turn, pass on
+their total receipts to the account GOV; it is illegal to have taxes paid
+directly to GOV.
+
+$offtext
+
+*Read in set definitions from Excel file (1data.xls) --------------
+
+*Model data (full set of activities and households)
+$call "gdxxrw i=1model.xls o=1model.gdx index=index!a6"
+$gdxin 1model.gdx
+
+*Load sets
+$load AC AAG A AAGR AMIN AIND ASER MAPAAGA C CAGR CMIN CIND CSER MAPA2C F FAGG FLAB FCAP FLND GOVF INS INSD INSDNG EN H HURB HRUR CTD CTE CTM R NEST
+
+ ACES(A)                = NO;
+ ALEO(A)$(NOT ACES(A))  = YES;
+ ANAGR(A)               = NOT AAGR(A);
+ CNAGR(C)               = NOT CAGR(C);
+ HAGG('HHD')            = YES;
+ ACNT(AC)               = YES;
+ ACNT('TOTAL')          = NO;
+ ACNT('HID')            = NO;
+ ACNT('H')              = NO;
+ ACNT('HSIZE')          = NO;
+ ACNT('WEIGHT')         = NO;
+
+*Add additional sets used in this country's data calibration
+*e.g. sets used in the mapping between factor nests
+
+SET
+ LAB(F)          aggregate labor category (top of labor nest)
+                 / lab1, lab2, lab3 /
+ LAB1(FLAB)      skilled labor
+                 / lab111, lab112, lab121, lab122, lab131, lab132 /
+ LAB2(FLAB)      semi-skilled labor
+                 / lab211, lab212, lab221, lab222, lab231, lab232 /
+ LAB3(FLAB)      unskilled labor
+                 / lab311, lab312, lab321, lab322, lab331, lab332 /
+;
+
+*--------------------------------------------------------------------------------------------
+*2. SAM -------------------------------------------------------------------------------------
+*--------------------------------------------------------------------------------------------
+
+*Load Social Accounting Matrix (SAM)
+$load SAM
+
+*The following adjustments are only relevant to a specific country SAM -----------
+
+PARAMETER
+ GOVFSHR(C,GOVF)         government expenditure share by commodity and function
+ GOVFSHR2(GOVF,*)        government expenditure share by function
+;
+
+$load GOVFSHR2
+
+*Identify government spending patterns by functions
+ GOVFSHR(C,GOVF)$SUM(GOVFP, GOVFSHR2(GOVFP,'GOV')) = GOVFSHR2(GOVF,'GOV')/SUM(GOVFP, GOVFSHR2(GOVFP,'GOV'));
+
+DISPLAY GOVFSHR;
+
+SET
+ REMEXP(C)       remove exports with small shares
+         / ccons, celwt  /
+ REMIMP(C)       remove imports with small shares
+         /  celwt, ccons /
+;
+
+*Move exports to changes in inventories
+ SAM(REMEXP,'DSTK') = SAM(REMEXP,'DSTK') + SAM(REMEXP,'ROW');
+ SAM('DSTK','S-I')  = SAM('DSTK','S-I') + SUM(REMEXP, SAM(REMEXP,'ROW'));
+ SAM('S-I','ROW')   = SAM('S-I','ROW') + SUM(REMEXP, SAM(REMEXP,'ROW'));
+ SAM(REMEXP,'ROW')  = 0;
+*Move imports to changes in inventories
+ SAM(REMIMP,'DSTK') = SAM(REMIMP,'DSTK') - SAM('ROW',REMIMP);
+ SAM('DSTK','S-I')  = SAM('DSTK','S-I') - SUM(REMIMP, SAM('ROW',REMIMP));
+ SAM('S-I','ROW')   = SAM('S-I','ROW') - SUM(REMIMP, SAM('ROW',REMIMP));
+ SAM('ROW',REMIMP)  = 0;
+*Move trade transactions costs to domestic costs
+ SAM(CTD,REMEXP) = SAM(CTD,REMEXP) + SUM(CTE, SAM(CTE,REMEXP));
+ SAM(CTD,REMIMP) = SAM(CTD,REMIMP) + SUM(CTM, SAM(CTM,REMIMP));
+ SAM(CTE,REMEXP) = 0;
+ SAM(CTM,REMIMP) = 0;
+ SAM(C,CTM)      = SAM(C,CTM)/SUM(CP, SAM(CP,CTM)) * SUM(ACNT, SAM(CTM,ACNT));
+ SAM(C,CTD)      = SAM(C,CTD)/SUM(CP, SAM(CP,CTD)) * SUM(ACNT, SAM(CTD,ACNT));
+ SAM(C,CTE)      = SAM(C,CTE)/SUM(CP, SAM(CP,CTE)) * SUM(ACNT, SAM(CTE,ACNT));
+*Move import tariffs to sales taxes
+ SAM('STAX',REMIMP) = SAM('STAX',REMIMP) + SAM('MTAX',REMIMP);
+ SAM('MTAX',REMIMP) = 0;
+ SAM('GOV','STAX')    = SUM(ACNT, SAM('STAX',ACNT));
+ SAM('GOV','DTAX')    = SUM(ACNT, SAM('DTAX',ACNT));
+*Remove any small imbalances that remain
+ SAM(C,'DSTK') = SUM(ACNT, SAM(ACNT,C) - SAM(C,ACNT)) + SAM(C,'DSTK');
+ SAM('DSTK','S-I') = SUM(ACNT, SAM(ACNT,'DSTK'));
+ SAM('S-I','ROW') = SAM('S-I','ROW') + SUM(ACNT, SAM(ACNT,'S-I')-SAM('S-I',ACNT));
+
+
+*If aggregate switch is chosen then group all households together into one category (HHD)
+IF (AGGREGATE EQ 1,
+*Aggregate existing households into HHD
+ SAM('HHD',ACNT) = SUM(H$(NOT HAGG(H)), SAM(H,ACNT));
+ SAM(ACNT,'HHD') = SUM(H$(NOT HAGG(H)), SAM(ACNT,H));
+*Clear existing household accounts H
+ SAM(H,AC)$(NOT HAGG(H)) = 0;
+ SAM(AC,H)$(NOT HAGG(H)) = 0;
+);
+
+*---------------------------------------------------------------------------------
+
+*$INCLUDE 1SAMBAL.INC
+
+*Account totals are recomputed. Check for SAM balance.
+
+ SAM('TOTAL',AC) = 0;
+ SAM(AC,'TOTAL') = 0;
+
+ SAM('TOTAL',AC) = SUM(ACNT, SAM(ACNT,AC));
+ SAM(AC,'TOTAL') = SUM(ACNT, SAM(AC,ACNT));
+
+PARAMETER
+ BALCHK(AC) column minus row total for SAM after running SAMBAL;
+
+ BALCHK(AC)      = SAM('TOTAL',AC) - SAM(AC,'TOTAL');
+
+ DISPLAY "After running SAMBAL", BALCHK;
+ DISPLAY "After running SAMBAL", SAM;
+
+PARAMETER
+ SCALE           SCALING PARAMETER FOR SAM / 0.001/;
+
+ SAM(AC,ACP) =  SAM(AC,ACP) * SCALE;
+
+*Defining CINV using SAM data with potential user input.
+
+*All commodities receiving payments from S-I are included in the set CINV.
+*Note: Negative payments are for stock changes and should be treated
+*as such.
+ CINV(C)$SAM(C,'S-I') = YES;
+
+*!!- User option to exclude selected commodities from the set CINV. Only
+*relevant for SAMs without the account DSTK.
+*Example:
+*If the set C includes a commodity called CWHEAT and payments in the cell
+*SAM('CWHEAT','S-I') are for stock changes, the user should include
+*the following line in the program:
+* CINV('CWHEAT')  = NO;
+
+DISPLAY CINV;
+
+*--------------------------------------------------------------------------------------------
+*3. ELASTICITIES ----------------------------------------------------------------------------
+*--------------------------------------------------------------------------------------------
+$ontext
+
+!!- In this section, the user inputs elasticities for trade, production,
+and household consumption. If the user does not supply all required
+data, missing data will be generated in STDMOD.GMS using simple
+assumptions.
+
+$offtext
+
+*Trade elasticities -----------------------------------------
+
+*SIGMAQ is the elasticity of substitution between imports
+*and domestic output in domestic demand.
+*SIGMAT is the elasticity of transformation for domestic
+*marketed output between exports and domestic supplies.
+
+SET
+ TRDELAS  trade elasticities
+ /
+ SIGMAQ  Armington elasticity
+ SIGMAT  CET elasticity
+ REGIMP  regional import substitution elasticity
+ REGEXP  regional export substitution elasticity
+ /
+
+ PRDELAS  production elasticities
+ /
+ PRODELAS
+ PRODELAS2
+ /
+;
+
+PARAMETER
+ TRADELAS(AC,TRDELAS)  Armington and CET elasticities by commodity
+ PRODELAS(A)     Elas of substit bt. factors - bottom of technology nest
+ PRODELASTAB(A,PRDELAS)
+ PRODELAS2(A)    Elas of substit bt. agg fac & intermed - top of tech nest
+ PRODELAS3(F,A)  Elasticity of substitution for higher layer factors
+ ELASAC(C)       Output aggregation elasticity for commodity C
+;
+
+*Load trade elasticities
+$load TRADELAS PRODELASTAB
+
+*Top-level elasticities
+ PRODELAS(A)        = PRODELASTAB(A,'PRODELAS');
+*Overwrite factor substitution to ensure exogenous sector growth rates
+ PRODELAS2(A)       = PRODELASTAB(A,'PRODELAS2');
+*Nested layer elasticities
+ PRODELAS3(F,A)     = 1.2;
+ PRODELAS3(FAGG,A)  = 1.5;
+
+SET CNTRADE(C)   commodities with less flexible regional substitutbility /
+
+/;
+
+*Output aggregation function elasticity
+ ELASAC(C)       = 8;
+ ELASAC(CNTRADE) = 0.5;
+
+
+*Nested factor demand mappings -----------------------------------------------------
+
+*Calculate all direct and indirect nested factors beneath each aggregate factor
+ TREE(F,FAGG)$(SMAX(FP, NEST(F,FP)) GT SMAX(FP, NEST(FP,FAGG))) = 1;
+ TREE(F,FAGG)$(NEST(F,FAGG) EQ SMAX(FP, NEST(FP,FAGG))) = 1;
+
+*Assign disaggregated factors to existing factors set
+ FDIS(F)$SAM(F,'TOTAL') = YES;
+
+ FNEST(F,FP)$NEST(FP,F)      = YES;
+ FTREE(F,FP,FPP)$(FDIS(FPP) AND TREE(FPP,FP) AND FNEST(F,FP)) = YES;
+ FTREE(F,FP,FP)$(FDIS(FP) AND FNEST(F,FP)) = YES;
+
+*set default to true if SAM is true
+ MFA1(F,A)$SAM(F,A) = YES;
+*set all nested factors to false
+ MFA1(F,A)$SUM(FAGG, TREE(F,FAGG)) = NO;
+*set active labor category for top layer
+ MFA1(FAGG,A)$(SMAX(F, NEST(F,FAGG)) EQ 1) = YES;
+
+*1st lower VA level (from top)
+ MFA2(F,FP,A)$(FNEST(F,FP) AND SUM(FPP$(FTREE(F,FP,FPP) AND NOT FAGG(FPP)), SAM(FPP,A))) = YES;
+
+*Prevent nested functions for non-active activities
+ MFA1(F,A)$(NOT SAM('TOTAL',A))    = NO;
+ MFA2(F,FP,A)$(NOT SAM('TOTAL',A)) = NO;
+
+DISPLAY MFA1, MFA2;
+
+*Household population data -----------------------------------------
+
+*Note: population data are not needed to run the model.
+*However, they may be useful for verification of household
+*model parameters and for report parameters.
+
+PARAMETER
+ POP(H)          Base-year population for household h (units)
+ POPTAB(AC,*)
+;
+
+$load POPTAB
+
+IF (AGGREGATE EQ 1,
+ POPTAB('HHD','SURVEY') = SUM(H, POPTAB(H,'SURVEY'));
+ POPTAB(H,'SURVEY')$(NOT H('HHD')) = 0;
+);
+
+ POP(H) =  POPTAB(H,'SURVEY');
+
+*Household consumption elasticities -------------------------------
+*Note: The Frisch parameter is included in this section.
+
+PARAMETERS
+ LESELAS1(H,C)    LES demand elasticities
+ FRISCH(H)        Frisch parameter for household LES demand
+ LESELAS2(A,C,H)  Exp'e elasticity of home dem by com - act - hhd
+;
+
+$load LESELAS1
+
+IF (AGGREGATE EQ 1,
+ LESELAS1('HHD',C) = 0.9;
+ LESELAS1(H,C)$(NOT H('HHD')) = 0;
+);
+
+*If LES elasticity missing in data then assign default value
+ LESELAS1(H,C)$(NOT LESELAS1(H,C)) = 0.9;
+
+ LESELAS2(A,C,H) =  0.9;
+ FRISCH(H)       = -1;
+
+*--------------------------------------------------------------------------------------------
+*4. PHYSICAL FACTOR QUANTITIES AND FACTOR MARKET STRUCTURES ---------------------------------
+*--------------------------------------------------------------------------------------------
+
+PARAMETER
+*initial employment numbers
+ SWITCH             if using wage (1) employment (2) or SAM data (3) / 1 /
+ SAMUNIT            SAM unit in relation to wage units               / 1000000000 /
+ WAGEINFLATE        inflate wages to base year (ratio to one)        / 1.700 /
+*National accounts combined with inflated survey wage data predicts 16 million employed instead of around 12 million
+*1.315 : annual inflation adjustment 2000-03 (Casale et al, 2005 cite a 1.26 increase in average nominal wages)
+*1.700 : manual adjustment to match 11.7 employment numbers (roughly what is observed) assumes average wages equal 3800 per month
+*        which is much higher than the observed 2900 (see Casale et al, 2005)
+ QFBASE(F,A)        sectoral employment data
+ WFBASE(F,A)        sectoral wage data
+ QFINPUT(F,AAG)     sectoral employment data
+ WFINPUT(F,AAG)     sectoral wage data
+ QFSBASE(AC)        total employment data
+ CHKWAGE(F,A)       check for missing wage data
+ CHKEMP(F,*)        compare employment approach to wage approach
+*capital initialisation
+ GRSCAPINC          gross capital income
+ CAPSTK             total capital stock
+ ACOR(F)            average capital-output ratio
+*factor adjustments and labor closures
+ LABDIFFSCALE(F)    labor unit adjustment factor (to ensure working deltava)
+ LABSCALE           labor unit                   /0.001/
+ etals(F)           elasticity of labor supply
+ CONVERGE0(F)       wage convergence parameter
+ CONVERGE(F)        wage convergence parameter
+;
+
+*While these adjustments must be removed when computing results from the model
+*but the adjustments reduce the substantial differences in value-added shares
+*between especially skilled and unskilled workers
+
+ LABDIFFSCALE(F) = 1;
+
+$load QFINPUT WFINPUT
+
+ QFBASE(F,A) = SUM(AAG$MAPAAGA(AAG,A), QFINPUT(F,AAG));
+ WFBASE(F,A) = SUM(AAG$MAPAAGA(AAG,A), WFINPUT(F,AAG))*WAGEINFLATE;
+
+*Adjustment factors
+ QFBASE(F,A)$(NOT SAM(F,A)) = 0;
+ WFBASE(F,A)$(NOT SAM(F,A)) = 0;
+
+*The following code uses the wage data to determine employment
+IF (SWITCH EQ 1,
+ CHKWAGE(FLAB,A)$(SAM(FLAB,A) AND (NOT WFBASE(FLAB,A))) = 1/0;
+ CHKEMP(FLAB,'EMPLOY-APP') = SUM(A, QFBASE(FLAB,A));
+ QFBASE(FLAB,A)$WFBASE(FLAB,A) = SAM(FLAB,A) * SAMUNIT / WFBASE(FLAB,A);
+ CHKEMP(FLAB,'WAGE-APP') = SUM(A, QFBASE(FLAB,A));
+ DISPLAY CHKWAGE, WFBASE, CHKEMP;
+);
+
+IF (SWITCH EQ 3,
+ QFBASE(F,A) = 0;
+);
+
+*Factor supply equals sum of factor employment
+ QFBASE(F,A) = QFBASE(F,A) * LABSCALE * LABDIFFSCALE(F);
+
+*Capital/output ratio (actually capital/value-added ratio)
+ ACOR(FCAP)          =  3.5;
+
+*Capital initialization
+ GRSCAPINC(FCAP)                           = SAM(FCAP,'TOTAL');
+ CAPSTK(FCAP)$SUM(A, QFBASE(FCAP,A))       = SUM(A, QFBASE(FCAP,A));
+ CAPSTK(FCAP)$(NOT SUM(A, QFBASE(FCAP,A))) = ACOR(FCAP)*SAM(FCAP,'TOTAL');
+ QFBASE(FCAP,A)$(NOT QFBASE(FCAP,A))       = CAPSTK(FCAP)*(SAM(FCAP,A)/GRSCAPINC(FCAP));
+
+ QFSBASE(F) = SUM(A, QFBASE(F,A));
+
+*Labor supply elasticities -----------------------------------------
+*Add factors with flexible labor supply to the set FLS
+*Set factor supply elasticity
+SET
+ FLS(F)          factors with flexible labor supply /
+
+ /;
+
+*South Africa: upward sloping curves for skilled labor (observed low unemployment)
+ FLS(LAB1) = YES;
+
+*Upward sloping supply curve not allowed for aggregate factors (automatic)
+ FLS(F)$(NOT FLAB(F)) = NO;
+
+*Set factor supply elasticity
+ etals(F)      = 0.4;
+
+*Fixed relative wages ----------------------------------------------
+SET
+ LREL(F)       factor groups with fixed relative wages /
+
+ /
+*Flexible factors first, fixed factors in parentheses
+ MAPRELW(F,FP) mapping between flexible and fixed factors /
+         lab111.(lab211, lab311)
+         lab112.(lab212, lab312)
+         lab121.(lab221, lab321)
+         lab122.(lab222, lab322)
+         lab131.(lab231, lab331)
+         lab132.(lab232, lab332)
+ /;
+
+ LREL(LAB2) = YES;
+ LREL(LAB3) = YES;
+
+*fixing relative wages is not allowed for aggregate factors
+ LREL(FAGG)      = NO;
+ LREL(FLS)       = NO;
+*fixing relative wages is not allowed for aggregate factors
+ MAPRELW(FAGG,F) = NO;
+ MAPRELW(F,FAGG) = NO;
+
+*Set convergence rate between flexible and fixed factors' real wages
+*e.g. 0.01 is an annual 1 percent convergence
+ CONVERGE0(F) = 0.00;
+ CONVERGE(F)  = CONVERGE0(F);
+
+*--------------------------------------------------------------------------------------------
+*5. COMMODITY VALUE SHARES FOR HOME CONSUMPTION ---------------------------------------------
+*--------------------------------------------------------------------------------------------
+
+PARAMETER
+ shrhome(A,C,H) value share for comm'y c in home cons of hhd h from act a
+;
+
+ shrhome(A,C,H) = 0;
+
+
+*--------------------------------------------------------------------------------------------
+*6. INITIALIZATION OF TAX DATA --------------------------------------------------------------
+*--------------------------------------------------------------------------------------------
+
+SET
+ TX  taxes in the model
+ /
+ INSTAX         direct taxes on domestic institutions
+ FACTAX         direct factor taxes
+ IMPTAX         import taxes
+ EXPTAX         export taxes
+ VATAX          value-added taxes
+ ACTTAX         taxes on activity revenue
+ COMTAX         taxes on commodity sales in domestic market
+ /
+;
+
+PARAMETER
+ TAXPAR(TX,AC)   payment by account ac to tax account tx
+ ;
+
+*direct taxes on domestic institutions
+ TAXPAR('INSTAX',INSD)  = SAM('DTAX',INSD);
+*direct factor taxes
+ TAXPAR('FACTAX',F)     = 0;
+*import taxes
+ TAXPAR('IMPTAX',C)     = SAM('MTAX',C);
+*export taxes
+ TAXPAR('EXPTAX',C)     = 0;
+*value-added taxes
+ TAXPAR('VATAX',A)      = 0;
+*taxes on activity revenue
+ TAXPAR('ACTTAX',A)     = SAM('ATAX',A);
+*taxes on commodity sales in domestic market
+ TAXPAR('COMTAX',C)     = SAM('STAX',C);
+
+PARAMETER
+ REGCUTOFF       minimum regional trade share                / 0.00 /
+ REGIMP(C,R)     regional imports values
+ REGTAR(C,R)     regional tariff values
+ REGEXP(C,R)     regional imports values
+ REGETX(C,R)     regional tariff values
+;
+
+$load REGIMP REGTAR REGEXP REGETX
+
+*Remove regioanl imports if no national imports in SAM
+ REGIMP(C,R)$(NOT SAM('ROW',C)) = 0;
+*Remove small import shares
+ REGIMP(C,R)$SUM(RP, REGIMP(C,RP)) = REGIMP(C,R) / SUM(RP, REGIMP(C,RP));
+ REGIMP(C,R)$(REGIMP(C,R) LT REGCUTOFF) = 0;
+*Remove regional tariffs if no regional trade
+ REGTAR(C,R)$(NOT REGIMP(C,R))  = 0;
+*If no regional trade data then assign to ROW
+ REGIMP(C,'ROW')$(NOT SUM(R, REGIMP(C,R))) = 100;
+ REGTAR(C,'ROW')$((NOT SUM(R, REGTAR(C,R))) AND SUM(R, REGIMP(C,R))) = 100;
+*Recalculate shares
+ REGIMP(C,R)$SUM(RP, REGIMP(C,RP)) = REGIMP(C,R) / SUM(RP, REGIMP(C,RP));
+ REGTAR(C,R)$SUM(RP, REGTAR(C,RP)) = REGTAR(C,R) / SUM(RP, REGTAR(C,RP));
+
+*Remove regioanl imports if no national imports in SAM
+ REGEXP(C,R)$(NOT SAM('ROW',C)) = 0;
+*Remove small import shares
+ REGEXP(C,R)$SUM(RP, REGEXP(C,RP)) = REGEXP(C,R) / SUM(RP, REGEXP(C,RP));
+ REGEXP(C,R)$(REGEXP(C,R) LT REGCUTOFF) = 0;
+*Remove regional tariffs if no regional trade
+ REGETX(C,R)$(NOT REGEXP(C,R))  = 0;
+*If no regional trade data then assign to ROW
+ REGEXP(C,'ROW')$(NOT SUM(R, REGEXP(C,R))) = 100;
+ REGETX(C,'ROW')$((NOT SUM(R, REGETX(C,R))) AND SUM(R, REGEXP(C,R))) = 100;
+*Recalculate shares
+ REGEXP(C,R)$SUM(RP, REGEXP(C,RP)) = REGEXP(C,R) / SUM(RP, REGEXP(C,RP));
+ REGETX(C,R)$SUM(RP, REGETX(C,RP)) = REGETX(C,R) / SUM(RP, REGETX(C,RP));
+
+DISPLAY REGIMP, REGTAR, REGEXP, REGETX;
