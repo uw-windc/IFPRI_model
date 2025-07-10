@@ -31,3 +31,11 @@ value(M_f[:GSAV])
 
 value.(M[:Y]) .- value.(M_f[:Y])
 
+
+
+P = production(M[:A]["agr"])
+cost_function(P.input, virtual=:partial)
+
+cost_function(P.input.children[1])
+
+cost_function(M[:A]["agr"], :m)
