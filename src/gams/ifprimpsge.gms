@@ -738,7 +738,8 @@ DEMAND.L = 1;
 TOTABS.L = 1;
 
 
-
+execute_unload "ifpri.gdx"
+$exit
 
 IFPRI.iterlim = 0;
 $include IFPRI.gen
